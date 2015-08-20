@@ -141,12 +141,12 @@ class EventProcessor(mp.Process):
         """
         while True:
             try:
-                logger.debug('Getting input from inq')
+                # logger.debug('Getting input from inq')
                 inp = self.inq.get()
-                logger.debug('Got input from inq')
+                # logger.debug('Got input from inq')
                 if isinstance(inp, str) and inp == 'STOP':
                     logger.debug('Worker received STOP')
-                    break
+                    return
                 else:
                     evtid, timestamp, frames = inp
             except TypeError:
@@ -197,12 +197,12 @@ class WriterProcess(mp.Process):
         num_events_processed = 0
         while True:
             try:
-                logger.debug('Getting output')
+                # logger.debug('Getting output')
                 r = self.outq.get()
-                logger.debug('Got output')
+                # logger.debug('Got output')
                 if isinstance(r, str) and r == 'STOP':
                     logger.debug('Writer received stop')
-                    break
+                    return
                 else:
                     outfile.write(r)
                     logger.debug('Wrote event %d', r.evt_id)
@@ -212,7 +212,6 @@ class WriterProcess(mp.Process):
             finally:
                 self.outq.task_done()
                 num_events_processed += 1
-        outfile.close()
 
 def main():
     """The main function for the controlling process.
@@ -307,7 +306,17 @@ def main():
 
     logger.debug('Making processes')
 
-    workers = [EventProcessor(lookup, peds, threshold, inq, outq) for i in range(8)]
+    try:
+        num_cores = mp.cpu_count()  # according to the docs, this might raise NotImplementedError
+        logger.debug('CPU count is %d', num_cores)
+    except NotImplementedError:
+        num_cores = 4  # this seems like a good assumption for a modern system
+        logger.warn("Couldn't get cpu count. Defaulting to %d", num_cores)
+
+    num_workers = max(num_cores - 1, 1)  # need to have at least one worker
+    logger.debug('Starting %d worker processes', num_workers)
+
+    workers = [EventProcessor(lookup, peds, threshold, inq, outq) for i in range(num_workers)]
     for w in workers:
         w.start()
     writer = WriterProcess(outq, output_name)
@@ -338,9 +347,12 @@ def main():
     inq.join()  # blocks main thread until queue is empty and all tasks on it are finished
     outq.join()
 
-    for i in range(len(workers)):
+    for i in range(num_workers):
         inq.put('STOP')  # This tells the processes to die
     outq.put('STOP')
+
+    inq.join()  # block until all of the STOPs have been taken out
+    outq.join()
 
     for proc in workers:
         proc.join()
