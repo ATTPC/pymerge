@@ -285,10 +285,13 @@ def main():
     print('Mapping frames in files')
 
     num_frames = {}
-    with mp.Pool(processes=num_cores-1) as pool:
-        index_res = pool.imap_unordered(index_file, gfile_paths)
-        for n, i in progress.bar(index_res, expected_size=len(gfile_paths)):
-            num_frames[n] = i
+    # with mp.Pool(processes=num_cores-1) as pool:
+    #     index_res = pool.imap_unordered(index_file, gfile_paths)
+    #     for n, i in progress.bar(index_res, expected_size=len(gfile_paths)):
+    #         num_frames[n] = i
+    for p in progress.bar(gfile_paths):
+        n, i = index_file(p)
+        num_frames[n] = i
 
     puts('Finished indexing. File length summary:')
     with indent(4):
