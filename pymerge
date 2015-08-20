@@ -142,34 +142,29 @@ class EventProcessor(mp.Process):
         """
         while True:
             try:
-                # logger.debug('Getting input from inq')
                 inp = self.inq.get()
-                # logger.debug('Got input from inq')
                 if isinstance(inp, str) and inp == 'STOP':
                     logger.debug('Worker received STOP')
                     return
                 else:
-                    evtid, timestamp, frames = inp
-            except TypeError:
-                logger.exception('TypeError in worker when receiving frames')
-            except (KeyboardInterrupt, SystemExit):
-                logger.debug('Got interrupted. Dying.')
-                return
-            finally:
-                self.inq.task_done()
+                    try:
+                        evtid, timestamp, frames = inp
+                    except TypeError:
+                        logger.exception('TypeError in worker when receiving frames')
+                    else:
+                        evt = self.process_event(evtid, timestamp, frames)
+                        logger.debug('Processed event %d', evtid)
+                        logger.debug('Waiting to put event on outq')
+                        self.outq.put(evt)
+                        logger.debug('Finished putting event on outq')
 
-            try:
-                evt = self.process_event(evtid, timestamp, frames)
-                logger.debug('Processed event %d', evtid)
             except (KeyboardInterrupt, SystemExit):
                 logger.debug('Got interrupted. Dying.')
                 return
             except:
                 logger.exception('Exception in event processing')
-            else:
-                logger.debug('Waiting to put event on outq')
-                self.outq.put(evt)
-                logger.debug('Finished putting event on outq')
+            finally:
+                self.inq.task_done()
 
 
 class WriterProcess(mp.Process):
