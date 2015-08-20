@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name = "pymerge",
-    version = "1.0",
+    version = "1.1",
     scripts = ['pymerge'],
 
     install_requires = ['numpy>=1.8',

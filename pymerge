@@ -23,6 +23,7 @@ from functools import reduce
 import copy
 from collections import deque
 import pytpc
+import re
 
 
 def subtract_and_delete_fpn(traces):
@@ -237,15 +238,36 @@ def index_file(path):
     return file_name, len(gf)
 
 
+def find_files(input_arg):
+    logger.debug('Finding files in %s', str(input_arg))
+    found_files = []
+    for ia in input_arg:
+        if os.path.isdir(ia):
+            logger.info('Looking for files in directory %s', ia)
+            graw_paths = glob.glob(os.path.join(os.path.abspath(ia), '*.graw'))
+            dat_paths = glob.glob(os.path.join(os.path.abspath(ia), '*.dat*'))
+            found_files += graw_paths + dat_paths
+            logger.info('Found %d files', len(graw_paths) + len(dat_paths))
+        elif os.path.isfile(ia):
+            found_files.append(os.path.abspath(ia))
+            logger.info('Added specified file %s', ia)
+        elif os.path.islink(ia):
+            found_files.append(os.path.realpath(ia))
+            logger.info('Resolved symlink %s', ia)
+        else:
+            logger.error('Input argument was not dir, path, or link: %s', ia)
+
+    return found_files
+
 def main():
     """The main function for the controlling process.
     """
     # Parse the command line options
 
     parser = argparse.ArgumentParser(description='A program for merging GRAW files.')
-    parser.add_argument('input', type=str,
+    parser.add_argument('input', type=str, nargs='+',
                         help='Path to a directory of GRAW files')
-    parser.add_argument('output', type=str, nargs='?',
+    parser.add_argument('--output', '-o', type=str,
                         help='Path to the output file')
     parser.add_argument('--lookup', '-l', type=str,
                         help='Path to the pad lookup table, as a CSV file')
@@ -276,7 +298,7 @@ def main():
     # Find and map the GRAW files
 
     print('Looking for files')
-    gfile_paths = glob.glob(os.path.join(os.path.abspath(args.input), '*.graw'))
+    gfile_paths = find_files(args.input)
     with indent(4):
         for x in gfile_paths:
             puts('Found file: %s' % os.path.basename(x))
@@ -285,10 +307,6 @@ def main():
     print('Mapping frames in files')
 
     num_frames = {}
-    # with mp.Pool(processes=num_cores-1) as pool:
-    #     index_res = pool.imap_unordered(index_file, gfile_paths)
-    #     for n, i in progress.bar(index_res, expected_size=len(gfile_paths)):
-    #         num_frames[n] = i
     for p in progress.bar(gfile_paths):
         n, i = index_file(p)
         num_frames[n] = i
@@ -337,8 +355,11 @@ def main():
     if args.output is not None:
         output_name = args.output
     else:
-        run_name = os.path.split(os.path.normpath(args.input))[-1]
-        output_name = run_name + '.evt'
+        if len(args.input) == 1 and os.path.isdir(args.input[0]):
+            run_name = os.path.split(os.path.normpath(args.input))[-1]
+            output_name = run_name + '.evt'
+        else:
+            output_name = 'out.evt'
 
     # Prepare the queues and worker/writer processes
 
