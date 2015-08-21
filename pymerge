@@ -213,9 +213,13 @@ def merge_partial_events(infiles, outfile_path):
     # Find the event IDs in each file
     all_evtids = np.sort(reduce(np.union1d, (f.evtids for f in infiles)))
 
-    # Open the output file for writing
-    outfile = pytpc.evtdata.EventFile(outfile_path, 'w')
+    logger.info('Setting up output queue')
+    outq = mp.JoinableQueue(50)
+    logger.info('Starting writer process')
+    writer = WriterProcess(outq, outfile_path)
+    writer.start()
 
+    print('Beginning merge')
     for evtid in progress.bar(all_evtids):
         partials = []
         for f in infiles:
@@ -228,10 +232,14 @@ def merge_partial_events(infiles, outfile_path):
 
         full_evt = pytpc.evtdata.Event(evtid, partials[0].timestamp)
         full_evt.traces = np.concatenate([p.traces for p in partials])
+        outq.put(full_evt)
 
-        outfile.write(full_evt)
-
-    outfile.close()
+    print('Finishing writing events to file')
+    outq.join()
+    logger.info('Stopping writer')
+    outq.put('STOP')
+    outq.join()
+    writer.join()
 
 
 def index_file(path, is_raw):
