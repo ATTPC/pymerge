@@ -21,7 +21,6 @@ import argparse
 import scipy.stats
 from functools import reduce
 import copy
-from collections import deque
 import pytpc
 import re
 
@@ -125,7 +124,7 @@ class EventProcessor(mp.Process):
         if len(bad_channels) != 0:
             addr_list = '[' + ', '.join(('{}/{}/{}/{}'.format(evt.traces['cobo'][i], evt.traces['asad'][i],
                                                               evt.traces['aget'][i], evt.traces['channel'][i])
-                                                              for i in bad_channels)) + ']'
+                                         for i in bad_channels)) + ']'
             logger.warn('Event %d contained unmapped channels: %s', evtid, addr_list)
             evt.traces = np.delete(evt.traces, bad_channels)
 
@@ -210,7 +209,32 @@ class WriterProcess(mp.Process):
                 num_events_processed += 1
 
 
-def index_file(path):
+def merge_partial_events(infiles, outfile_path):
+    # Find the event IDs in each file
+    all_evtids = np.sort(reduce(np.union1d, (f.evtids for f in infiles)))
+
+    # Open the output file for writing
+    outfile = pytpc.evtdata.EventFile(outfile_path, 'w')
+
+    for evtid in all_evtids:
+        partials = []
+        for f in infiles:
+            try:
+                partials.append(f.get_by_event_id(evtid))
+            except KeyError:
+                continue
+            except ValueError as e:
+                raise ValueError('File %s had non-unique event numbers' % f.fp.name) from e
+
+        full_evt = pytpc.evtdata.Event(evtid, partials[0].timestamp)
+        full_evt.traces = np.concatenate([p.traces for p in partials])
+
+        outfile.write(full_evt)
+
+    outfile.close()
+
+
+def index_file(path, is_raw):
     """Open a GRAW file for the first time, causing it to be indexed.
 
     If the file is already indexed, this should return quickly. This allows us to know how many frames are
@@ -220,6 +244,8 @@ def index_file(path):
     ----------
     path : string
         The path to the GRAW file
+    is_raw : bool
+        Is the file a GRAW file?
 
     Returns
     -------
@@ -228,31 +254,51 @@ def index_file(path):
     integer
         The number of frames in the file
     """
-    gf = pytpc.grawdata.GRAWFile(path)
+    if is_raw:
+        f = pytpc.grawdata.GRAWFile(path)
+    else:
+        f = pytpc.evtdata.EventFile(path)
     file_name = os.path.basename(path)
-    return file_name, len(gf)
+    return file_name, len(f)
 
 
 def find_files(input_arg):
     logger.debug('Finding files in %s', str(input_arg))
-    found_files = []
+    raw_files = []
+    evt_files = []
     for ia in input_arg:
         if os.path.isdir(ia):
             logger.info('Looking for files in directory %s', ia)
             graw_paths = glob.glob(os.path.join(os.path.abspath(ia), '*.graw'))
             dat_paths = glob.glob(os.path.join(os.path.abspath(ia), '*.dat*'))
-            found_files += graw_paths + dat_paths
-            logger.info('Found %d files', len(graw_paths) + len(dat_paths))
+            evt_paths = glob.glob(os.path.join(os.path.abspath(ia), '*.evt'))
+            raw_files += graw_paths + dat_paths
+            logger.info('Found %d raw files', len(graw_paths) + len(dat_paths))
+            evt_files += evt_paths
+            logger.info('Found %d evt files', len(evt_paths))
         elif os.path.isfile(ia):
-            found_files.append(os.path.abspath(ia))
-            logger.info('Added specified file %s', ia)
+            if re.match(r'.*\.graw|.*\.dat.*', ia):
+                raw_files.append(os.path.abspath(ia))
+                logger.info('Added specified raw file %s', ia)
+            elif re.match(r'.*\.evt', ia):
+                evt_files.append(os.path.abspath(ia))
+                logger.info('Added specified evt file %s', ia)
+            else:
+                logger.warn('Specified file %s was of an unknown type', ia)
         elif os.path.islink(ia):
-            found_files.append(os.path.realpath(ia))
-            logger.info('Resolved symlink %s', ia)
+            if re.match(r'.*\.graw|.*\.dat.*', ia):
+                raw_files.append(os.path.realpath(ia))
+                logger.info('Resolved symlink %s to raw file', ia)
+            elif re.match(r'.*\.evt', ia):
+                evt_files.append(os.path.realpath(ia))
+                logger.info('Resolved symlink %s to evt file', ia)
+            else:
+                logger.warn('Symlink %s points to file of unknown type', ia)
         else:
             logger.error('Input argument was not dir, path, or link: %s', ia)
 
-    return found_files
+    return raw_files, evt_files
+
 
 def main():
     """The main function for the controlling process.
@@ -293,16 +339,27 @@ def main():
     # Find and map the GRAW files
 
     print('Looking for files')
-    gfile_paths = find_files(args.input)
+    gfile_paths, efile_paths = find_files(args.input)
     with indent(4):
-        for x in gfile_paths:
+        for x in (gfile_paths + efile_paths):
             puts('Found file: %s' % os.path.basename(x))
-    print('Found {} GRAW files'.format(len(gfile_paths)))
+
+    if len(gfile_paths) > 0 and len(efile_paths) == 0:
+        files_are_raw = True
+        file_paths = gfile_paths
+        print('Found {} GRAW files'.format(len(file_paths)))
+    elif len(efile_paths) > 0 and len(gfile_paths) == 0:
+        files_are_raw = False
+        file_paths = efile_paths
+        print('Found {} event files'.format(len(file_paths)))
+    else:
+        logger.critical('Inputs had both raw and processed files. Give one or the other, but not both.')
+        sys.exit(1)
 
     print('Mapping frames in files')
 
     num_frames = {}
-    for p in progress.bar(gfile_paths):
+    for p in progress.bar(file_paths):
         n, i = index_file(p)
         num_frames[n] = i
 
@@ -311,41 +368,41 @@ def main():
         for n in sorted(num_frames.keys()):
             puts('{} contained {} frames'.format(n, num_frames[n]))
 
-    # Load the lookup table and pedestals, and parse the threshold option
+    if files_are_raw:
+        # Load the lookup table and pedestals, and parse the threshold option
 
-    if args.lookup is not None:
-        print('Loading lookup table')
-        lookup = {}
-        with open(args.lookup) as lfile:
-            for line in lfile:
-                cobo, asad, aget, ch, pad = [int(a) for a in line.strip().split(',')]
-                if -1 in (cobo, asad, aget, ch, pad):
-                    continue
-                lookup[(cobo, asad, aget, ch)] = pad
-    else:
-        lookup = {}
+        if args.lookup is not None:
+            print('Loading lookup table')
+            lookup = {}
+            with open(args.lookup) as lfile:
+                for line in lfile:
+                    cobo, asad, aget, ch, pad = [int(a) for a in line.strip().split(',')]
+                    if -1 in (cobo, asad, aget, ch, pad):
+                        continue
+                    lookup[(cobo, asad, aget, ch)] = pad
+        else:
+            lookup = {}
 
-    if args.pedestals is not None:
-        print('Loading pedestals')
-        peds = np.zeros(10240)
-        with open(args.pedestals) as pfile:
-            for line in pfile:
-                pad, ped = line.strip().split(',')
-                peds[int(pad)] = float(ped) if '.' in ped else int(ped)
-    else:
-        peds = None
+        if args.pedestals is not None:
+            print('Loading pedestals')
+            peds = np.zeros(10240)
+            with open(args.pedestals) as pfile:
+                for line in pfile:
+                    pad, ped = line.strip().split(',')
+                    peds[int(pad)] = float(ped) if '.' in ped else int(ped)
+        else:
+            peds = None
 
-    if args.threshold is not None:
-        threshold = args.threshold
-    else:
-        threshold = None
+        if args.threshold is not None:
+            threshold = args.threshold
+        else:
+            threshold = None
 
     # Now open the files for reading
-
-    gfiles = [pytpc.grawdata.GRAWFile(g) for g in gfile_paths]
-    valid_events = sorted(reduce(set.union, [set(g.evtids) for g in gfiles]))  # TODO: Make this check for frames that are in all cobos
-
-    logger.debug('Length of set of valid events was %d', len(valid_events))
+    if files_are_raw:
+        files = [pytpc.grawdata.GRAWFile(f) for f in file_paths]
+    else:
+        files = [pytpc.evtdata.EventFile(f) for f in file_paths]
 
     if args.output is not None:
         output_name = args.output
@@ -356,59 +413,69 @@ def main():
         else:
             output_name = 'out.evt'
 
-    # Prepare the queues and worker/writer processes
+    if not files_are_raw:
+        merge_partial_events(files, output_name)
+        return
 
-    logger.debug('Making queues')
+    else:
 
-    inq = mp.JoinableQueue(50)
-    outq = mp.JoinableQueue(50)
+        # Prepare the queues and worker/writer processes
 
-    logger.debug('Making processes')
+        logger.debug('Making queues')
 
-    num_workers = max(num_cores - 1, 1)  # need to have at least one worker
-    logger.debug('Starting %d worker processes', num_workers)
+        inq = mp.JoinableQueue(50)
+        outq = mp.JoinableQueue(50)
 
-    workers = [EventProcessor(lookup, peds, threshold, inq, outq) for i in range(num_workers)]
-    for w in workers:
-        w.start()
-    writer = WriterProcess(outq, output_name)
-    writer.start()
+        logger.debug('Making processes')
 
-    # Now start putting frames on the input queue
+        num_workers = max(num_cores - 1, 1)  # need to have at least one worker
+        logger.debug('Starting %d worker processes', num_workers)
 
-    print('Beginning merge')
+        workers = [EventProcessor(lookup, peds, threshold, inq, outq) for n in range(num_workers)]
+        for w in workers:
+            w.start()
+        writer = WriterProcess(outq, output_name)
+        writer.start()
 
-    for i in progress.bar(valid_events):
-        frames = []
-        for g in gfiles:
-            this_frames = g.get_raw_frames_for_event(i)
-            frames += this_frames
+        # Now start putting frames on the input queue
 
-        if len(frames) == 0:
-            logger.warn('No frames in event %d', i)
-            continue
-        else:
-            logging.debug('Found %d frames for event %d', len(frames), i)
+        print('Beginning merge')
 
-        inq.put((i, 0, frames))
-        logger.debug('Put in frames for event %d', i)
+        # TODO: Make this check for frames that are in all cobos
+        valid_events = sorted(reduce(set.union, [set(f.evtids) for f in files]))
+        logger.debug('Length of set of valid events was %d', len(valid_events))
 
-    # Wrap up the queues and worker/writer processes
+        for i in progress.bar(valid_events):
+            frames = []
+            for g in files:
+                this_frames = g.get_raw_frames_for_event(i)
+                frames += this_frames
 
-    logger.debug('Waiting for all jobs to finish')
-    inq.join()  # blocks main thread until queue is empty and all tasks on it are finished
-    outq.join()
+            if len(frames) == 0:
+                logger.warn('No frames in event %d', i)
+                continue
+            else:
+                logging.debug('Found %d frames for event %d', len(frames), i)
 
-    for i in range(num_workers):
-        inq.put('STOP')  # This tells the processes to die
-    outq.put('STOP')
+            inq.put((i, 0, frames))
+            logger.debug('Put in frames for event %d', i)
 
-    inq.join()  # block until all of the STOPs have been taken out
-    outq.join()
+        # Wrap up the queues and worker/writer processes
 
-    for proc in workers:
-        proc.join()
-    writer.join()
+        logger.debug('Waiting for all jobs to finish')
+        inq.join()  # blocks main thread until queue is empty and all tasks on it are finished
+        outq.join()
+
+        for i in range(num_workers):
+            inq.put('STOP')  # This tells the processes to die
+        outq.put('STOP')
+
+        inq.join()  # block until all of the STOPs have been taken out
+        outq.join()
+
+        for proc in workers:
+            proc.join()
+        writer.join()
 
 
 if __name__ == '__main__':
