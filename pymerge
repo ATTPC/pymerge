@@ -216,7 +216,7 @@ def merge_partial_events(infiles, outfile_path):
     # Open the output file for writing
     outfile = pytpc.evtdata.EventFile(outfile_path, 'w')
 
-    for evtid in all_evtids:
+    for evtid in progress.bar(all_evtids):
         partials = []
         for f in infiles:
             try:
