@@ -360,7 +360,7 @@ def main():
 
     num_frames = {}
     for p in progress.bar(file_paths):
-        n, i = index_file(p)
+        n, i = index_file(p, files_are_raw)
         num_frames[n] = i
 
     puts('Finished indexing. File length summary:')
