@@ -25,7 +25,7 @@ import pytpc
 import re
 
 
-def subtract_and_delete_fpn(traces):
+def process_fpn_data(traces, do_correction=True):
     """Subtract the normalized, average fixed-pattern noise from the data.
 
     The FPN channels for each AGET are averaged, renormalized to zero, and subtracted
@@ -35,6 +35,8 @@ def subtract_and_delete_fpn(traces):
     ----------
     traces : np.ndarray
         The structured NumPy array from the event, e.g. `evt.traces`
+    do_correction : bool, optional
+        Whether to actually perform the FPN correction. If False, the FPN data will just be thrown away.
 
     Returns
     -------
@@ -47,19 +49,20 @@ def subtract_and_delete_fpn(traces):
 
     fpn_channels = [11, 22, 45, 56]
 
-    for cobo, asad, aget in {tuple(a) for a in traces[['cobo', 'asad', 'aget']]}:
-        fpn_idx = np.where(np.all((traces['cobo'] == cobo, traces['asad'] == asad,
-                                   traces['aget'] == aget, np.in1d(traces['channel'], fpn_channels)), axis=0))[0]
-        data_idx = np.where(np.all((traces['cobo'] == cobo, traces['asad'] == asad,
-                                    traces['aget'] == aget, ~np.in1d(traces['channel'], fpn_channels)), axis=0))[0]
+    if do_correction:
+        for cobo, asad, aget in {tuple(a) for a in traces[['cobo', 'asad', 'aget']]}:
+            fpn_idx = np.where(np.all((traces['cobo'] == cobo, traces['asad'] == asad,
+                                       traces['aget'] == aget, np.in1d(traces['channel'], fpn_channels)), axis=0))[0]
+            data_idx = np.where(np.all((traces['cobo'] == cobo, traces['asad'] == asad,
+                                        traces['aget'] == aget, ~np.in1d(traces['channel'], fpn_channels)), axis=0))[0]
 
-        if len(fpn_idx) != 4:
-            logger.warn('Number of FPN channels was incorrect: %d (should be 4)' % len(fpn_idx))
+            if len(fpn_idx) != 4:
+                logger.warn('Number of FPN channels was incorrect: %d (should be 4)' % len(fpn_idx))
 
-        mean_fpn = traces['data'][fpn_idx].mean(axis=0)
-        mean_fpn -= mean_fpn.mean()
+            mean_fpn = traces['data'][fpn_idx].mean(axis=0)
+            mean_fpn -= mean_fpn.mean()
 
-        traces['data'][data_idx] -= mean_fpn
+            traces['data'][data_idx] -= mean_fpn
 
     return np.delete(traces, np.where(np.in1d(traces['channel'], fpn_channels)))
 
@@ -84,12 +87,13 @@ class EventProcessor(mp.Process):
     outq : multiprocessing.JoinableQueue
         The output queue to put the processed, merged events onto
     """
-    def __init__(self, lookup, peds, threshold, inq, outq):
+    def __init__(self, lookup, peds, threshold, inq, outq, do_fpn_correction=True):
         self.lookup = lookup
         self.peds = peds
         self.threshold = threshold
         self.inq = inq
         self.outq = outq
+        self.do_fpn_correction = do_fpn_correction
         super().__init__()
 
     def process_event(self, evtid, timestamp, rawframes):
@@ -118,7 +122,7 @@ class EventProcessor(mp.Process):
 
         evt.traces['pad'] = [self.lookup.get(tuple(a), 20000) for a in evt.traces[['cobo', 'asad', 'aget', 'channel']]]
 
-        evt.traces = subtract_and_delete_fpn(evt.traces)
+        evt.traces = process_fpn_data(evt.traces, do_correction=self.do_fpn_correction)
 
         bad_channels = np.where(evt.traces['pad'] == 20000)[0]
         if len(bad_channels) != 0:
@@ -326,6 +330,8 @@ def main():
                         help='Threshold value')
     parser.add_argument('--verbose', '-v', action='count', default=0,
                         help='Print more information')
+    parser.add_argument('--nofpn', action='store_true',
+                        help='Throw away FPN data without performing the correction')
     args = parser.parse_args()
 
     if args.verbose == 1:
@@ -439,7 +445,8 @@ def main():
         num_workers = max(num_cores - 1, 1)  # need to have at least one worker
         logger.debug('Starting %d worker processes', num_workers)
 
-        workers = [EventProcessor(lookup, peds, threshold, inq, outq) for n in range(num_workers)]
+        workers = [EventProcessor(lookup, peds, threshold, inq, outq, do_fpn_correction=~args.nofpn)
+                   for n in range(num_workers)]
         for w in workers:
             w.start()
         writer = WriterProcess(outq, output_name)
