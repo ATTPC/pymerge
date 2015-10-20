@@ -1,0 +1,74 @@
+import pytpc
+from pytpc.constants import degrees
+import argparse
+import numpy as np
+from clint.textui import progress
+from xml.etree import ElementTree
+from itertools import product
+import h5py
+
+
+def reduce_event(evt, pad_plane, excl_pads):
+    evt.traces[np.where(~np.in1d(evt.traces['pad'], excl_pads))]['data'] = 0
+    xyz = evt.xyzs(pads=pad_plane, return_pads=True)
+    return xyz
+
+
+def find_exclusion_region(xcfg, lookup):
+    tree = ElementTree.parse(xcfg)
+    root = tree.getroot()
+
+    excl_pads = []
+    for cobo, asad, aget, ch in product(range(10), range(4), range(4), range(68)):
+        path = "./Node[@id='CoBo']/Instance[@id='{}']/AsAd[@id='{}']/Aget[@id='{}']/channel[@id='{}']/TriggerInhibition"
+        node = root.find(path.format(cobo, asad, aget, ch))
+        if node is not None:
+            try:
+                excl_pads.append(lookup[(cobo, asad, aget, ch)])
+            except KeyError:
+                print('The file contained an unmapped channel:', (cobo, asad, aget, ch))
+                continue
+
+    return np.array(excl_pads)
+
+
+def load_padmap(fp):
+    lookup = {}
+    with open(fp) as lfile:
+        for line in lfile:
+            cobo, asad, aget, ch, pad = [int(a) for a in line.strip().split(',')]
+            if -1 in (cobo, asad, aget, ch, pad):
+                continue
+            lookup[(cobo, asad, aget, ch)] = pad
+    return lookup
+
+
+def main():
+    parser = argparse.ArgumentParser(description='A script to keep only the peaks from a dataset')
+    parser.add_argument('input', help='The input Event file')
+    parser.add_argument('output', help='The output HDF5 file, which will have a table of peak xyz values')
+    parser.add_argument('--config', '-c', help='The config file to read an exclusion zone from', required=True)
+    parser.add_argument('--lookup', '-l', help='The pad mapping table', required=True)
+    args = parser.parse_args()
+
+    lookup = load_padmap(args.lookup)
+    excl_pads = find_exclusion_region(args.config, lookup)
+    pad_plane = pytpc.generate_pad_plane(-108*degrees)
+
+    infile = pytpc.EventFile(args.input, 'r')
+    outfile = h5py.File(args.output, 'w')
+
+    gp = outfile.create_group('/reduced_get_events')
+
+    for evt in progress.bar(infile):
+        xyz = reduce_event(evt, pad_plane, excl_pads)
+        dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip')
+        dset.attrs['evt_id'] = evt.evt_id
+        dset.attrs['timestamp'] = evt.timestamp
+
+    infile.close()
+    outfile.close()
+
+
+if __name__ == '__main__':
+    main()

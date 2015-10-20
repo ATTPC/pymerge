@@ -1,18 +1,17 @@
 from setuptools import setup
 
 setup(
-    name = "pymerge",
-    version = "1.1",
-    scripts = ['pymerge'],
-
-    install_requires = ['numpy>=1.8',
-                        'clint>=0.4',
-                        'scipy>=0.16',
-                        'pytpc'],
-
-    author = 'Joshua Bradt',
-    author_email = 'bradt@nscl.msu.edu',
-    description = 'A package for merging GRAW data files',
-    keywords = 'graw data merge',
-    url = 'http://github.com/attpc/pymerge'
+    name="pymerge",
+    version="1.2",
+    scripts=['pymerge', 'peaks2hdf'],
+    install_requires=['numpy>=1.9',
+                      'clint>=0.4',
+                      'scipy>=0.16',
+                      'h5py>=2.5',
+                      'pytpc'],
+    author='Joshua Bradt',
+    author_email='bradt@nscl.msu.edu',
+    description='A package for merging and processing GRAW data files',
+    keywords='graw data merge reduce',
+    url='http://github.com/attpc/pymerge'
 )
