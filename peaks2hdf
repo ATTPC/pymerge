@@ -6,6 +6,8 @@ from clint.textui import progress
 from xml.etree import ElementTree
 from itertools import product
 import h5py
+import signal
+import sys
 
 
 def reduce_event(evt, pad_plane, excl_pads):
@@ -56,19 +58,23 @@ def main():
     pad_plane = pytpc.generate_pad_plane(-108*degrees)
 
     infile = pytpc.EventFile(args.input, 'r')
-    outfile = h5py.File(args.output, 'w')
 
-    gp = outfile.create_group('/reduced_get_events')
+    with h5py.File(args.output, 'w') as outfile:
+        gp = outfile.create_group('/reduced_get_events')
 
-    for evt in progress.bar(infile):
-        xyz = reduce_event(evt, pad_plane, excl_pads)
-        dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip')
-        dset.attrs['evt_id'] = evt.evt_id
-        dset.attrs['timestamp'] = evt.timestamp
-
-    infile.close()
-    outfile.close()
+        for evt in progress.bar(infile):
+            xyz = reduce_event(evt, pad_plane, excl_pads)
+            dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip')
+            dset.attrs['evt_id'] = evt.evt_id
+            dset.attrs['timestamp'] = evt.timestamp
 
 
 if __name__ == '__main__':
+    def handle_signal(signum, stack_frame):
+        print('Received signal {}. Quitting.'.format(signum))
+        sys.stdout.flush()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGQUIT, handle_signal)
     main()
