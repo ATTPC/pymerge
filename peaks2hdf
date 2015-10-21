@@ -64,7 +64,7 @@ def main():
 
         for evt in progress.bar(infile):
             xyz = reduce_event(evt, pad_plane, excl_pads)
-            dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip')
+            dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip', shuffle=True)
             dset.attrs['evt_id'] = evt.evt_id
             dset.attrs['timestamp'] = evt.timestamp
 
