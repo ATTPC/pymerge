@@ -12,6 +12,7 @@ import sys
 
 def reduce_event(evt, pad_plane, excl_pads):
     evt.traces[np.where(~np.in1d(evt.traces['pad'], excl_pads))]['data'] = 0
+    evt.traces['data'][:, 508:] = 0
     xyz = evt.xyzs(pads=pad_plane, return_pads=True)
     return xyz
 
