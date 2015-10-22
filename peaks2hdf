@@ -2,7 +2,6 @@ import pytpc
 from pytpc.constants import degrees
 import argparse
 import numpy as np
-from clint.textui import progress
 from xml.etree import ElementTree
 from itertools import product
 import h5py
@@ -46,6 +45,31 @@ def load_padmap(fp):
     return lookup
 
 
+def smart_progress_bar(iterable, expected_size=None):
+    if not sys.stdout.isatty():
+
+        def print_progress(iterable, expected_size=None):
+            from math import log10, floor
+
+            if expected_size is None:
+                max_ = len(iterable)
+            else:
+                max_ = expected_size
+
+            interval = 10**floor(log10(max_ // 100))
+
+            for i, v in enumerate(iterable):
+                if i % interval == 0:
+                    print('At event {} / {}'.format(i, max_), flush=True)
+                yield v
+
+        return print_progress(iterable, expected_size)
+
+    else:
+        from clint.textui import progress
+        return progress.bar(iterable, expected_size=expected_size)
+
+
 def main():
     parser = argparse.ArgumentParser(description='A script to keep only the peaks from a dataset')
     parser.add_argument('input', help='The input Event file')
@@ -60,10 +84,16 @@ def main():
 
     infile = pytpc.EventFile(args.input, 'r')
 
-    with h5py.File(args.output, 'w') as outfile:
-        gp = outfile.create_group('/reduced_get_events')
+    with h5py.File(args.output, 'a') as outfile:
+        gp = outfile.require_group('reduced_get_events')
 
-        for evt in progress.bar(infile):
+        if len(gp) > 0:
+            first_evt = max([int(k) for k in gp.keys() if k.isdigit()]) + 1
+            print('Already processed through event {}. Starting with event {}'.format(first_evt - 1, first_evt))
+        else:
+            first_evt = 0
+
+        for evt in smart_progress_bar(infile.evtrange(start=first_evt), expected_size=len(infile)-first_evt):
             xyz = reduce_event(evt, pad_plane, excl_pads)
             dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip', shuffle=True)
             dset.attrs['evt_id'] = evt.evt_id
