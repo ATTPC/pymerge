@@ -1,0 +1,70 @@
+import pytpc
+import sys
+import argparse
+import signal
+
+
+def smart_progress_bar(iterable, expected_size=None):
+    if not sys.stdout.isatty():
+
+        def print_progress(iterable, expected_size=None):
+            from math import log10, floor
+
+            if expected_size is None:
+                max_ = len(iterable)
+            else:
+                max_ = expected_size
+
+            if max_ > 100:
+                interval = 10**floor(log10(max_ // 100))
+            else:
+                interval = 1
+
+            for i, v in enumerate(iterable):
+                if i % interval == 0:
+                    print('At event {} / {}'.format(i, max_), flush=True)
+                yield v
+
+        return print_progress(iterable, expected_size)
+
+    else:
+        from clint.textui import progress
+        return progress.bar(iterable, expected_size=expected_size)
+
+
+def main():
+    parser = argparse.ArgumentParser(description='A script to translate an Event file to an HDF file')
+    parser.add_argument('input', help='The input Event file')
+    parser.add_argument('output', help='The output HDF5 file')
+    args = parser.parse_args()
+
+    efile = pytpc.EventFile(args.input, 'r')
+
+    with pytpc.HDFDataFile(args.output, 'a') as hfile:
+        gp = hfile.fp.require_group(hfile.get_group_name)
+
+        all_evts = set(efile.evtids)
+        if len(gp) > 0:
+            finished_evts = set(int(k) for k in gp.keys() if k.isdigit())
+            evts_to_process = all_evts - finished_evts
+            if len(evts_to_process) > 0:
+                print('Already processed {} events. Continuing from where we left off.'.format(len(finished_evts)))
+            else:
+                print('All events have already been processed.')
+                sys.exit(0)
+        else:
+            evts_to_process = all_evts
+        for i in smart_progress_bar(evts_to_process):
+            evt = efile.get_by_event_id(i)
+            hfile.write_get_event(evt)
+
+
+if __name__ == '__main__':
+    def handle_signal(signum, stack_frame):
+        print('Received signal {}. Quitting.'.format(signum))
+        sys.stdout.flush()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGQUIT, handle_signal)
+    main()

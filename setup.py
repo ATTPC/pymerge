@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name="pymerge",
     version="1.2",
-    scripts=['pymerge', 'peaks2hdf'],
+    scripts=['pymerge', 'peaks2hdf', 'evt2hdf'],
     install_requires=['numpy>=1.9',
                       'clint>=0.4',
                       'scipy>=0.16',
