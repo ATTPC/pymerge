@@ -9,7 +9,7 @@ from itertools import product
 import h5py
 import signal
 import sys
-
+import math
 
 def reduce_event(evt, pad_plane, excl_pads,remove_noise=False):
     evt.traces[np.where(~np.in1d(evt.traces['pad'], excl_pads))]['data'] = 0
@@ -17,9 +17,19 @@ def reduce_event(evt, pad_plane, excl_pads,remove_noise=False):
     xyz = evt.xyzs(pads=pad_plane, peaks_only=True, return_pads=True)
     if(remove_noise == True):
         # remove background
-    
-        #
-    return xyz
+        cluster = np.array([0,0,0,0,0])
+        for i in xyz:
+            count = 0
+            for j in xyz:
+                d = math.sqrt((i[0]-j[0])**2 + (i[1]-j[1])**2 + (i[2]-j[2])**2)
+                if(d < 10 and d > 0.0):
+                    count = count+1
+            if (count > 0):
+                cluster = np.vstack((cluster,i))
+
+        cluster = cluster[1:]
+            #
+    return cluster
 
 
 def find_exclusion_region(xcfg, lookup):
@@ -80,7 +90,7 @@ def smart_progress_bar(iterable, expected_size=None):
 
 
 def main():
-    print 'hello'
+    print("hello")
     parser = argparse.ArgumentParser(description='A script to keep only the peaks from a dataset')
     parser.add_argument('input', help='The input Event file')
     parser.add_argument('output', help='The output HDF5 file, which will have a table of peak xyz values')
@@ -88,11 +98,15 @@ def main():
     parser.add_argument('--lookup', '-l', help='The pad mapping table', required=True)
     parser.add_argument('--remove_noise', '-r',help='true or false: whether to remove statistical noise from data' ,required=False)
     args = parser.parse_args()
-    print args.accumulate(args.integers)
+    print(args)
     lookup = load_padmap(args.lookup)
     excl_pads = find_exclusion_region(args.config, lookup)
     pad_plane = pytpc.generate_pad_plane(-108*degrees)
-
+    if(args.remove_noise == 'True'):
+        rem_noise = True
+    else :
+        rem_noise = False
+    #print(rem_noise)
     infile = pytpc.EventFile(args.input, 'r')
 
     with h5py.File(args.output, 'a') as outfile:
@@ -111,7 +125,7 @@ def main():
             evts_to_process = all_evts
         for i in smart_progress_bar(evts_to_process):
             evt = infile.get_by_event_id(i)
-            xyz = reduce_event(evt, pad_plane, excl_pads,True)
+            xyz = reduce_event(evt, pad_plane, excl_pads,rem_noise)
             dset = gp.create_dataset('{:d}'.format(evt.evt_id), data=xyz, compression='gzip', shuffle=True)
             dset.attrs['evt_id'] = evt.evt_id
             dset.attrs['timestamp'] = evt.timestamp
