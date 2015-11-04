@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# -*-python-*- 
+
 """A program for merging GRAW files
 
 This program can be used to merge a set of GRAW files into one Event file, and to apply some pre-processing to the
