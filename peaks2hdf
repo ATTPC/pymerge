@@ -29,7 +29,9 @@ def reduce_event(evt, pad_plane, excl_pads,remove_noise=False):
 
         cluster = cluster[1:]
             #
-    return cluster
+        return cluster
+    else:
+        return xyz
 
 
 def find_exclusion_region(xcfg, lookup):
