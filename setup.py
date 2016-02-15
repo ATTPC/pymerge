@@ -8,7 +8,7 @@ setup(
                       'clint>=0.4',
                       'scipy>=0.16',
                       'h5py>=2.5',
-                      'pytpc>=0.7'],
+                      'pytpc>=0.7.1'],
     author='Joshua Bradt',
     author_email='bradt@nscl.msu.edu',
     description='A package for merging and processing GRAW data files',
