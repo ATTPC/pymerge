@@ -62,7 +62,7 @@ def process_fpn_data(traces, do_correction=True):
             mean_fpn = traces['data'][fpn_idx].mean(axis=0)
             mean_fpn -= mean_fpn.mean()
 
-            traces['data'][data_idx] -= mean_fpn
+            traces['data'][data_idx] -= np.round(mean_fpn).astype('int16')
 
     return np.delete(traces, np.where(np.in1d(traces['channel'], fpn_channels)))
 
