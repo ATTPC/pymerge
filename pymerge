@@ -184,33 +184,40 @@ class WriterProcess(mp.Process):
     filename : string
         The path to the file to write
     """
-    def __init__(self, outq, filename):
+    def __init__(self, outq, filename, file_format):
         self.filename = filename
         self.outq = outq
+        self.file_format = file_format
+        if self.file_format == 'hdf':
+            self.output_class = pytpc.hdfdata.HDFDataFile
+        elif self.file_format == 'evt':
+            self.output_class = pytpc.evtdata.EventFile
+        else:
+            raise NotImplementedError("The specified format {} has not been implemented".format(file_format))
         super().__init__()
 
     def run(self):
         """The main function for the writer process.
         """
-        outfile = pytpc.evtdata.EventFile(self.filename, 'w')
         num_events_processed = 0
-        while True:
-            try:
-                # logger.debug('Getting output')
-                r = self.outq.get()
-                # logger.debug('Got output')
-                if isinstance(r, str) and r == 'STOP':
-                    logger.debug('Writer received stop')
+        with self.output_class(self.filename, 'w') as outfile:
+            while True:
+                try:
+                    # logger.debug('Getting output')
+                    r = self.outq.get()
+                    # logger.debug('Got output')
+                    if isinstance(r, str) and r == 'STOP':
+                        logger.debug('Writer received stop')
+                        return
+                    else:
+                        outfile.write(r)
+                        logger.debug('Wrote event %d', r.evt_id)
+                except (KeyboardInterrupt, SystemExit):
+                    logger.debug('Got interrupted. Dying.')
                     return
-                else:
-                    outfile.write(r)
-                    logger.debug('Wrote event %d', r.evt_id)
-            except (KeyboardInterrupt, SystemExit):
-                logger.debug('Got interrupted. Dying.')
-                return
-            finally:
-                self.outq.task_done()
-                num_events_processed += 1
+                finally:
+                    self.outq.task_done()
+                    num_events_processed += 1
 
 
 def merge_partial_events(infiles, outfile_path):
