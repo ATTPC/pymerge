@@ -190,8 +190,10 @@ class WriterProcess(mp.Process):
         self.file_format = file_format
         if self.file_format == 'hdf':
             self.output_class = pytpc.hdfdata.HDFDataFile
+            self.write = pytpc.hdfdata.HDFDataFile.write_get_event
         elif self.file_format == 'evt':
             self.output_class = pytpc.evtdata.EventFile
+            self.write = pytpc.evtdata.EventFile.write
         else:
             raise NotImplementedError("The specified format {} has not been implemented".format(file_format))
         super().__init__()
@@ -210,7 +212,7 @@ class WriterProcess(mp.Process):
                         logger.debug('Writer received stop')
                         return
                     else:
-                        outfile.write(r)
+                        self.write(outfile, r)
                         logger.debug('Wrote event %d', r.evt_id)
                 except (KeyboardInterrupt, SystemExit):
                     logger.debug('Got interrupted. Dying.')
@@ -473,7 +475,7 @@ def main():
                    for n in range(num_workers)]
         for w in workers:
             w.start()
-        writer = WriterProcess(outq, output_name)
+        writer = WriterProcess(outq, output_name, args.format)
         writer.start()
 
         # Now start putting frames on the input queue
@@ -519,4 +521,15 @@ def main():
 
 if __name__ == '__main__':
     logger = mp.log_to_stderr()
+
+    import signal
+
+    def handle_signal(signum, stack_frame):
+        print('Received signal {}. Quitting.'.format(signum))
+        sys.stdout.flush()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+    signal.signal(signal.SIGQUIT, handle_signal)
+
     main()
