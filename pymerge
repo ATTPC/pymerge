@@ -316,6 +316,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description='A program for merging GRAW files.')
     parser.add_argument('input', type=str, nargs='+',
                         help='Path to a directory of GRAW files')
+    parser.add_argument('--format', '-f', choices=['evt', 'hdf'], default='evt',
+                        help='Output file format')
     parser.add_argument('--output', '-o', type=str,
                         help='Path to the output file')
     parser.add_argument('--lookup', '-l', type=str,
@@ -429,12 +431,18 @@ def main():
 
     if args.output is not None:
         output_name = args.output
+        output_ext = os.path.splitext(os.path.basename(output_name))[-1][1:]
+        if ((args.format == 'hdf' and output_ext not in ('hdf', 'h5'))
+                or (args.format == 'evt' and output_ext != 'evt')):
+            logger.warn("Output path has extension '%s', but data will be written using format '%s'",
+                        output_ext, args.format)
     else:
+        output_ext = '.h5' if args.format == 'hdf' else '.evt'
         if len(args.input) == 1 and os.path.isdir(args.input[0]):
             run_name = os.path.split(os.path.normpath(args.input))[-1]
-            output_name = run_name + '.evt'
+            output_name = run_name + output_ext
         else:
-            output_name = 'out.evt'
+            output_name = 'out' + output_ext
 
     if not files_are_raw:
         merge_partial_events(files, output_name)
