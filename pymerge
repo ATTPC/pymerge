@@ -50,6 +50,7 @@ def process_fpn_data(traces, do_correction=True):
     fpn_channels = [11, 22, 45, 56]
 
     if do_correction:
+        logger.debug('Doing FPN correction')
         for cobo, asad, aget in {tuple(a) for a in traces[['cobo', 'asad', 'aget']]}:
             fpn_idx = np.where(np.all((traces['cobo'] == cobo, traces['asad'] == asad,
                                        traces['aget'] == aget, np.in1d(traces['channel'], fpn_channels)), axis=0))[0]
@@ -471,7 +472,7 @@ def main():
         num_workers = max(num_cores - 1, 1)  # need to have at least one worker
         logger.debug('Starting %d worker processes', num_workers)
 
-        workers = [EventProcessor(lookup, peds, threshold, inq, outq, do_fpn_correction=~args.nofpn)
+        workers = [EventProcessor(lookup, peds, threshold, inq, outq, do_fpn_correction=not(args.nofpn))
                    for n in range(num_workers)]
         for w in workers:
             w.start()
